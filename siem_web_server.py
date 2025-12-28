@@ -214,17 +214,15 @@ def query_database(
                     response_data += chunk
                     
                     # Проверяем, не получили ли мы полный JSON
-                    if b'}' in chunk and chunk.count(b'{') == chunk.count(b'}'):
-                        # Даем небольшую паузу на случай если еще есть данные
-                        time.sleep(0.05)
-                        try:
-                            # Проверяем, можно ли распарсить
-                            temp_response = response_data.decode('utf-8', errors='ignore').strip()
-                            json.loads(temp_response)
-                            break  # JSON валиден, выходим
-                        except:
-                            continue  # Продолжаем читать
-                            
+                    try:
+                        # Пробуем распарсить накопленные данные
+                        temp_response = response_data.decode('utf-8', errors='ignore').strip()
+                        json.loads(temp_response)
+                        break  # JSON валиден, выходим
+                    except json.JSONDecodeError:
+                        # JSON не завершен, продолжаем читать
+                        continue
+                        
                 except socket.timeout:
                     break
                 except Exception as e:
@@ -465,14 +463,14 @@ def build_search_query(
                 ]
             })
         else:
-            # ❌ ОБЫЧНЫЙ ПОИСК (как сейчас)
+            # ✅ ПОИСК С РЕГУЛЯРНЫМИ ВЫРАЖЕНИЯМИ
             conditions.append({
                 "$or": [
-                    {"raw_log": {"$like": f"%{search_text}%"}},
-                    {"user": {"$like": f"%{search_text}%"}},
-                    {"process": {"$like": f"%{search_text}%"}},
-                    {"command": {"$like": f"%{search_text}%"}},
-                    {"hostname": {"$like": f"%{search_text}%"}}
+                    {"raw_log": {"$regex": search_text}},
+                    {"user": {"$regex": search_text}},
+                    {"process": {"$regex": search_text}},
+                    {"command": {"$regex": search_text}},
+                    {"hostname": {"$regex": search_text}}
                 ]
             })
     
@@ -487,15 +485,20 @@ def build_search_query(
         conditions.append({"source": source})
     
     # Диапазон дат
-    if start_date:
-        conditions.append({"timestamp": {"$gt": start_date}})
-    
-    if end_date:
-        if "timestamp" in query:
-            # Объединяем условия по дате
-            pass
-        else:
-            conditions.append({"timestamp": {"$lt": end_date}})
+    if start_date and end_date:
+        # Оба значения заданы - диапазон
+        conditions.append({
+            "timestamp": {
+                "$gte": start_date,
+                "$lte": end_date
+            }
+        })
+    elif start_date:
+        # Только начальная дата
+        conditions.append({"timestamp": {"$gte": start_date}})
+    elif end_date:
+        # Только конечная дата
+        conditions.append({"timestamp": {"$lte": end_date}})
     
     # Объединяем условия
     if conditions:
@@ -1058,7 +1061,7 @@ async def get_events(
     per_page = response.get("per_page", limit)
     
     return {
-        "status": "error",
+        "status": "success",
         "data": events,
         "pagination": {
             "page": current_page,
