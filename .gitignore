@@ -2,11 +2,11 @@
 # Compiled and build artifacts
 *.o
 *.obj
+*.out
 *.exe
 *.dll
 *.so
 *.a
-*.out
 
 # Dependencies
 venv/
@@ -21,17 +21,24 @@ env/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Build directories
-build/
-dist/
-*.egg-info/
-.tox/
-.coverage
-.coverage.*
-.cache/
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.backup
+
+# Environment
+.env
+.env.local
+.env.*
+.env.local.*
+.python-version
 .pytest_cache/
 .mypy_cache/
-.hypothesis/
+.coverage
+coverage/
 
 # Editors
 .vscode/
@@ -39,15 +46,16 @@ dist/
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
 
-# Logs
-*.log
-
-# Environment variables
-.env
-.env.local
-.env.*
-!.env.example
+# Build directories
+build/
+dist/
+*.egg-info/
+.tox/
+.coverage/
+htmlcov/
 
 # OS generated files
 .DS_Store
@@ -57,11 +65,4 @@ dist/
 .Trashes
 ehthumbs.db
 Thumbs.db
-Thumbs.db:encryptable
-
-# Temporary files
-*.tmp
-*.temp
-*~
-.DS_Store
 ```

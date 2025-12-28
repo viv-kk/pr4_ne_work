@@ -392,6 +392,7 @@ void ConnectionManager::processRequest(int clientSocket, const string& requestDa
         }
 
     }
+}
 Response ConnectionManager::insertDocument(const Request& req) {    
     Response resp;
     Database* dbValue = nullptr;
