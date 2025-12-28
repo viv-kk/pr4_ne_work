@@ -4,6 +4,7 @@
 #include "HashMap.h"
 #include <netinet/in.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -120,9 +121,19 @@ bool ConnectionManager::start(int port, int numWorkers) {
                      << ", errno: " << errno << endl;
             }
             
+            // Also set send timeout to ensure responses are sent properly
+            if (setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, &local_timeout, sizeof(local_timeout)) < 0) {
+                cerr << "[SERVER][WARN] Failed to set send timeout for client " << clientSocket 
+                     << ", errno: " << errno << endl;
+            }
+            
             thread([this, clientSocket, clientIP]() {
                 vector<char> buffer(65536);
                 string requestStr;
+                
+                // Set socket to blocking mode for this client
+                int flags = fcntl(clientSocket, F_GETFL, 0);
+                fcntl(clientSocket, F_SETFL, flags & ~O_NONBLOCK);
                 
                 while (running) {
                     // Не очищаем буфер - recv перезапишет
@@ -135,19 +146,48 @@ bool ConnectionManager::start(int port, int numWorkers) {
                         // Собираем полный запрос
                         requestStr.append(buffer.data(), bytesRead);
                         
-                        // Проверяем, получили ли полный JSON
-                        if (isValidJsonRequest(requestStr)) {
-                            // Обработка запроса в рабочем потоке
-                            {
-                                lock_guard<mutex> lock(queueMutex);
-                                requestQueue.push({clientSocket, requestStr});
+                        // Process all complete JSON requests in the buffer
+                        size_t pos = 0;
+                        while (pos < requestStr.length()) {
+                            // Find the first '{' from position pos
+                            size_t start = requestStr.find('{', pos);
+                            if (start == string::npos) {
+                                // No more JSON objects, keep remaining data
+                                requestStr = requestStr.substr(pos);
+                                break;
                             }
-                            queueCV.notify_one();
                             
-                            // Очищаем для следующего запроса
-                            requestStr.clear();
+                            // Try to extract a complete JSON starting from 'start'
+                            string potentialJson = requestStr.substr(start);
+                            
+                            if (isValidJsonRequest(potentialJson)) {
+                                // We found a complete JSON request
+                                // Process it in the worker thread
+                                {
+                                    lock_guard<mutex> lock(queueMutex);
+                                    requestQueue.push({clientSocket, potentialJson});
+                                }
+                                queueCV.notify_one();
+                                
+                                // Move position past this JSON
+                                pos = start + potentialJson.length();
+                                
+                                // Check if there's more data after this JSON
+                                if (pos < requestStr.length()) {
+                                    // Keep remaining data for next iteration
+                                    requestStr = requestStr.substr(pos);
+                                    pos = 0; // Reset pos to process remaining data in this iteration
+                                } else {
+                                    // No more data, clear the string
+                                    requestStr.clear();
+                                    break;
+                                }
+                            } else {
+                                // This is not a complete JSON, keep the rest and wait for more data
+                                requestStr = requestStr.substr(start);
+                                break;
+                            }
                         }
-                        // Если не полный JSON, продолжаем читать
                         
                     } else if (bytesRead == 0) {
                         cout << "[SERVER] Client " << clientSocket << " disconnected" << endl;
@@ -301,14 +341,26 @@ void ConnectionManager::processRequest(int clientSocket, const string& requestDa
         
         string responseJson = resp.toJson();
         
-        int bytesSent = send(clientSocket, responseJson.c_str(), responseJson.length(), 0);
-        if (bytesSent < 0) {
-            cerr << "[SERVER][ERROR] Failed to send response to client " << clientSocket 
-                 << ", errno: " << errno << endl;
-            close(clientSocket);
-            return;
+        // Ensure the response is sent completely
+        const char* responseData = responseJson.c_str();
+        size_t totalLen = responseJson.length();
+        size_t sentLen = 0;
+        
+        while (sentLen < totalLen) {
+            int bytesSent = send(clientSocket, responseData + sentLen, totalLen - sentLen, 0);
+            if (bytesSent < 0) {
+                cerr << "[SERVER][ERROR] Failed to send response to client " << clientSocket 
+                     << ", errno: " << errno << endl;
+                break;
+            }
+            sentLen += bytesSent;
+        }
+        
+        if (sentLen == totalLen) {
+            cout << "[SERVER] Sent " << sentLen << " bytes response to client " << clientSocket << endl;
         } else {
-            cout << "[SERVER] Sent " << bytesSent << " bytes response to client " << clientSocket << endl;
+            cerr << "[SERVER][ERROR] Partial response sent to client " << clientSocket 
+                 << ", sent: " << sentLen << ", expected: " << totalLen << endl;
         }
         
     } catch (const exception& e) {
@@ -320,89 +372,26 @@ void ConnectionManager::processRequest(int clientSocket, const string& requestDa
         errorResp.message = "Internal server error: " + string(e.what());
         
         string errorJson = errorResp.toJson();
-        int bytesSent = send(clientSocket, errorJson.c_str(), errorJson.length(), 0);
-        if (bytesSent < 0) {
-            cerr << "[SERVER][ERROR] Failed to send error response, errno: " << errno << endl;
-        }
-    }
-    // В функции processRequest в db_server.cpp (в потоке клиента)
-while (running) {
-    // Вместо char buffer[8192] используем динамический буфер
-    vector<char> buffer(8192);
-    string requestStr;
-    
-    // Читаем данные пока не получим полный JSON
-    while (true) {
-        int bytesRead = recv(clientSocket, buffer.data(), buffer.size() - 1, 0);
+        // Ensure the error response is sent completely
+        const char* errorData = errorJson.c_str();
+        size_t totalLen = errorJson.length();
+        size_t sentLen = 0;
         
-        if (bytesRead > 0) {
-            buffer[bytesRead] = '\0';
-            requestStr.append(buffer.data(), bytesRead);
-            cout << "[SERVER] Received " << bytesRead << " bytes from client " << clientSocket 
-                 << ", total: " << requestStr.length() << " bytes" << endl;
-            
-            // Проверяем, является ли это полным JSON
-            if (isValidJsonRequest(requestStr)) {
-                cout << "[SERVER] Complete JSON request received" << endl;
-                break; // Получили полный запрос
-            } else if (requestStr.length() > 100000) { // Защита от слишком больших запросов
-                cerr << "[SERVER][ERROR] Request too large: " << requestStr.length() << " bytes" << endl;
-                Response errorResp;
-                errorResp.status = "error";
-                errorResp.message = "Request too large";
-                string errorJson = errorResp.toJson();
-                send(clientSocket, errorJson.c_str(), errorJson.length(), 0);
-                requestStr.clear();
+        while (sentLen < totalLen) {
+            int bytesSent = send(clientSocket, errorData + sentLen, totalLen - sentLen, 0);
+            if (bytesSent < 0) {
+                cerr << "[SERVER][ERROR] Failed to send error response, errno: " << errno << endl;
                 break;
             }
-            // Продолжаем читать
-        } else if (bytesRead == 0) {
-            cout << "[SERVER] Client " << clientSocket << " disconnected" << endl;
-            break;
-        } else {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Таймаут - проверяем если у нас есть что-то
-                if (!requestStr.empty() && isValidJsonRequest(requestStr)) {
-                    break;
-                }
-                continue;
-            } else {
-                cerr << "[SERVER][ERROR] Failed to receive data from client " << clientSocket 
-                     << ", errno: " << errno << endl;
-                break;
-            }
+            sentLen += bytesSent;
         }
-    }
-    
-    if (requestStr.empty()) {
-        break; // Клиент отключился
-    }
-    
-    if (!isValidJsonRequest(requestStr)) {
-        cerr << "[SERVER][ERROR] Invalid JSON request from client " << clientSocket << endl;
-        cerr << "[SERVER][ERROR] Request preview (first 500 chars): " 
-             << requestStr.substr(0, min(requestStr.length(), 500ul)) << endl;
         
-        Response errorResp;
-        errorResp.status = "error";
-        errorResp.message = "Invalid JSON request";
-        string errorJson = errorResp.toJson();
-        send(clientSocket, errorJson.c_str(), errorJson.length(), 0);
-        continue;
-    }
-    
-    // Обработка запроса в рабочем потоке
-    {
-        lock_guard<mutex> lock(queueMutex);
-        requestQueue.push({clientSocket, requestStr});
-    }
-    queueCV.notify_one();
-    
-    // Очищаем для следующего запроса
-    requestStr.clear();
-}
-}
+        if (sentLen != totalLen) {
+            cerr << "[SERVER][ERROR] Partial error response sent, sent: " << sentLen 
+                 << ", expected: " << totalLen << endl;
+        }
 
+    }
 Response ConnectionManager::insertDocument(const Request& req) {    
     Response resp;
     Database* dbValue = nullptr;
@@ -636,37 +625,3 @@ Response ConnectionManager::deleteDocuments(const Request& req) {
     return resp;
 }
 
-// В db_server.cpp добавьте
-bool isCompleteJson(const string& str) {
-    if (str.empty() || str[0] != '{') return false;
-    
-    int braceCount = 0;
-    bool inString = false;
-    bool escaped = false;
-    
-    for (size_t i = 0; i < str.length(); i++) {
-        char c = str[i];
-        
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        
-        if (c == '\\') {
-            escaped = true;
-            continue;
-        }
-        
-        if (c == '"') {
-            inString = !inString;
-            continue;
-        }
-        
-        if (!inString) {
-            if (c == '{') braceCount++;
-            else if (c == '}') braceCount--;
-        }
-    }
-    
-    return braceCount == 0 && !inString;
-}
