@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIEM Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.js"></script>
+    <link href="/css/style.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #4361ee;
+            --secondary-color: #3a0ca3;
+            --success-color: #4cc9f0;
+            --danger-color: #f72585;
+            --warning-color: #ff9e00;
+            --dark-color: #212529;
+            --light-color: #f8f9fa;
+        }
+        
+        body {
+            background-color: #f5f7fb;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .navbar {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .dashboard-header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+            height: 100%;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .stat-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+        
+        .stat-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--dark-color);
+        }
+        
+        .stat-title {
+            color: #666;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            height: 100%;
+        }
+        
+        .recent-events {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            height: 100%;
+        }
+        
+        .event-item {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .event-item:last-child {
+            border-bottom: none;
+        }
+        
+        .severity-badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .severity-high { background-color: #ffebee; color: #c62828; }
+        .severity-medium { background-color: #fff3e0; color: #ef6c00; }
+        .severity-low { background-color: #e8f5e9; color: #2e7d32; }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .last-updated {
+            font-size: 12px;
+            color: #888;
+            text-align: right;
+        }
+
+        .chart-container canvas {
+            min-height: 250px;
+            max-height: 400px;
+            height: 300px !important; /* ← главное: фиксированная высота */
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/dashboard">
+                <i class="bi bi-shield-check me-2"></i>
+                <strong>SIEM Dashboard</strong>
+            </a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/dashboard">
+                            <i class="bi bi-speedometer2 me-1"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/events">
+                            <i class="bi bi-list-task me-1"></i> Events
+                        </a>
+                    </li>
+                </ul>
+                
+                <div class="navbar-text">
+                    <span class="me-3">
+                        <i class="bi bi-person-circle me-1"></i>
+                        <span id="usernameDisplay"></span>
+                    </span>
+                    <button class="btn btn-outline-light btn-sm" onclick="logout()">
+                        <i class="bi bi-box-arrow-right me-1"></i> Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <div class="container-fluid mt-4">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="dashboard-header">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h2 class="mb-1">Security Dashboard</h2>
+                            <p class="text-muted mb-0">Real-time monitoring of security events</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button class="btn btn-primary" onclick="refreshDashboard()">
+                                <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+                            </button>
+                            <div class="last-updated mt-2" id="lastUpdated">
+                                Last updated: <span id="updateTime">--:--:--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Summary Stats -->
+        <div class="row mb-4">
+            <div class="col-lg-3 col-md-6">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #e3f2fd;">
+                        <i class="bi bi-pc-display" style="color: #1976d2;"></i>
+                    </div>
+                    <div class="stat-number" id="totalAgents">0</div>
+                    <div class="stat-title">Active Agents</div>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-md-6">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #f3e5f5;">
+                        <i class="bi bi-shield-exclamation" style="color: #7b1fa2;"></i>
+                    </div>
+                    <div class="stat-number" id="totalEvents24h">0</div>
+                    <div class="stat-title">Events (24h)</div>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-md-6">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #e8f5e9;">
+                        <i class="bi bi-person-check" style="color: #388e3c;"></i>
+                    </div>
+                    <div class="stat-number" id="failedLogins">0</div>
+                    <div class="stat-title">Failed Logins</div>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-md-6">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #fff3e0;">
+                        <i class="bi bi-exclamation-triangle" style="color: #f57c00;"></i>
+                    </div>
+                    <div class="stat-number" id="highSeverity">0</div>
+                    <div class="stat-title">High Severity</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Charts Row 1 -->
+        <div class="row mb-4">
+            <div class="col-lg-8">
+                <div class="chart-container">
+                    <h5>Events Timeline (Last 24 Hours)</h5>
+                    <div class="timeline-chart-wrapper">
+                        <canvas id="timelineChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-4">
+                <div class="chart-container">
+                    <h5>Events by Severity</h5>
+                    <canvas id="severityChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Charts Row 2 -->
+        <div class="row mb-4">
+            <div class="col-lg-6">
+                <div class="chart-container">
+                    <h5>Top Event Types</h5>
+                    <canvas id="eventTypesChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="col-lg-6">
+                <div class="chart-container">
+                    <h5>Top Processes</h5>
+                    <div id="processesList" class="loading">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        Loading...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Добавьте после Charts Row 2 или замените Top Processes -->
+        <div class="row mb-4">
+            <div class="col-lg-6">
+                <div class="chart-container">
+                    <h5>Top Event Types</h5>
+                    <div class="bar-chart-wrapper">
+                        <canvas id="eventTypesChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6">
+                <div class="chart-container">
+                    <h5>Top Users</h5>
+                    <div id="topUsersList" class="loading">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        Loading...
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom Row -->
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="recent-events">
+                    <h5>Recent Logins</h5>
+                    <div id="recentLogins" class="loading">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        Loading...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6">
+                <div class="recent-events">
+                    <h5>Active Hosts</h5>
+                    <div id="activeHosts" class="loading">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        Loading...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Global variables
+        let authToken = null;
+        let charts = {};
+        let autoRefreshInterval = null;
+        // В начале script-блока, после объявления переменных:
+        let currentAbortController = null; // ← для отмены запросов
+        let isLoading = false; // ← флаг загрузки
+        
+        // Initialize
+        window.addEventListener('DOMContentLoaded', () => {
+            checkAuth();
+            loadDashboard();
+            startAutoRefresh();
+        });
+        
+        // Check authentication
+        function checkAuth() {
+            authToken = localStorage.getItem('siem_auth_token');
+            const username = localStorage.getItem('siem_username');
+            
+            if (!authToken || !username) {
+                window.location.href = '/login';
+                return;
+            }
+            
+            document.getElementById('usernameDisplay').textContent = username;
+        }
+        
+        // Logout
+        function logout() {
+            localStorage.removeItem('siem_auth_token');
+            localStorage.removeItem('siem_username');
+            window.location.href = '/login';
+        }
+        
+        // API helper
+        // API helper (обновлённая версия)
+        async function apiCall(endpoint, method = 'GET', body = null, signal = null) {
+            const headers = {
+                'Authorization': `Basic ${authToken}`,
+                'Content-Type': 'application/json'
+            };
+
+            const options = {
+                method,
+                headers
+            };
+
+            if (signal) {
+                options.signal = signal;
+            }
+
+            if (body && (method === 'POST' || method === 'PUT')) {
+                options.body = JSON.stringify(body);
+            }
+
+            try {
+                const response = await fetch(endpoint, options);
+
+                if (response.status === 401) {
+                    logout();
+                    return null;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+                }
+
+                const json = await response.json();
+
+                // Доп. защита: если сервер вернул HTML (например, при ошибке), это не JSON
+                if (typeof json !== 'object' || json === null) {
+                    console.warn('Unexpected non-JSON response from', endpoint, json);
+                    return null;
+                }
+
+                return json;
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    throw error; // Пробрасываем для обработки выше
+                }
+                console.error(`API call failed for ${endpoint}:`, error);
+                return null;
+            }
+        }
+        
+        // Load dashboard data
+        // Load dashboard data
+        // Global variables
+        let lastLoadStart = 0; // ← добавить таймер
+
+        async function loadDashboard() {
+            // Проверяем авторизацию
+            if (!authToken) {
+                console.warn('No auth token, skipping dashboard load');
+                return;
+            }
+            
+            // Более агрессивная защита от параллельных вызовов
+            if (isLoading) {
+                console.warn('Dashboard load already in progress. Skipping duplicate call');
+                return;
+            }
+            
+            // Если есть активный контроллер отмены, отменяем
+            if (currentAbortController) {
+                try {
+                    currentAbortController.abort();
+                    console.log('Aborted previous request');
+                } catch (e) {
+                    // Игнорируем ошибки отмены
+                }
+            }
+            
+            // Создаем новый контроллер
+            currentAbortController = new AbortController();
+            const signal = currentAbortController.signal;
+            
+            isLoading = true;
+            setIsLoading(true);
+            
+            try {
+                console.log('Loading dashboard data...');
+                
+                // Список всех эндпоинтов
+                const endpoints = [
+                    '/api/dashboard/agents',
+                    '/api/dashboard/logins',
+                    '/api/dashboard/hosts',
+                    '/api/dashboard/events-by-type',
+                    '/api/dashboard/events-by-severity',
+                    '/api/dashboard/top-users',
+                    '/api/dashboard/top-processes',
+                    '/api/dashboard/events-timeline'
+                ];
+                
+                // Создаем промисы для всех запросов с обработкой отмены
+                const promises = endpoints.map(async (endpoint) => {
+                    if (signal.aborted) {
+                        throw new Error('Request aborted');
+                    }
+                    
+                    try {
+                        const result = await apiCall(endpoint, 'GET', null, signal);
+                        return { endpoint, data: result, error: null };
+                    } catch (error) {
+                        if (error.name === 'AbortError') {
+                            throw error; // Пробрасываем выше
+                        }
+                        console.warn(`Failed to load ${endpoint}:`, error.message);
+                        return { endpoint, data: null, error: error.message };
+                    }
+                });
+                
+                // Ждем все запросы
+                const results = await Promise.allSettled(promises);
+                
+                // Проверяем отмену
+                if (signal.aborted) {
+                    console.log('Dashboard load was aborted after requests');
+                    return;
+                }
+                
+                // Обрабатываем результаты
+                const resultsMap = {};
+                let hasValidData = false;
+                
+                results.forEach((result, index) => {
+                    const endpoint = endpoints[index];
+                    
+                    if (result.status === 'fulfilled') {
+                        const { data, error } = result.value;
+                        
+                        if (error) {
+                            console.warn(`Error for ${endpoint}:`, error);
+                            resultsMap[endpoint] = null;
+                        } else {
+                            resultsMap[endpoint] = data;
+                            if (data && data.status === 'success' && data.data) {
+                                hasValidData = true;
+                            }
+                        }
+                    } else {
+                        console.warn(`Promise rejected for ${endpoint}:`, result.reason);
+                        resultsMap[endpoint] = null;
+                    }
+                });
+                
+                if (!hasValidData) {
+                    console.warn('No valid data received from any endpoint');
+                    showToast('No data available from server', 'warning');
+                    return;
+                }
+                
+                // Обновляем интерфейс
+                updateDashboardUI(resultsMap);
+                
+                console.log('Dashboard loaded successfully');
+                
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('Dashboard load aborted:', error.message);
+                } else {
+                    console.error('Critical error in loadDashboard:', error);
+                    showToast('Failed to load dashboard data', 'error');
+                }
+            } finally {
+                // ВСЕГДА сбрасываем флаги
+                isLoading = false;
+                setIsLoading(false);
+                currentAbortController = null;
+            }
+        }
+
+        function updateDashboardUI(resultsMap) {
+            // Обновляем статистику
+            updateSummaryStats(
+                resultsMap['/api/dashboard/agents'],
+                resultsMap['/api/dashboard/logins'],
+                resultsMap['/api/dashboard/events-by-severity']
+            );
+            
+            // Обновляем графики
+            updateCharts(
+                resultsMap['/api/dashboard/events-by-type'],
+                resultsMap['/api/dashboard/events-by-severity'],
+                resultsMap['/api/dashboard/events-timeline']
+            );
+            
+            // Обновляем списки
+            updateRecentLogins(resultsMap['/api/dashboard/logins']);
+            updateActiveHosts(resultsMap['/api/dashboard/hosts']);
+            updateTopUsers(resultsMap['/api/dashboard/top-users']);
+            updateTopProcesses(resultsMap['/api/dashboard/top-processes']);
+            
+            // Обновляем время
+            document.getElementById('updateTime').textContent = new Date().toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+
+        // Вспомогательная функция для отображения состояния загрузки
+        function setIsLoading(loading) {
+            const spinners = document.querySelectorAll('.loading .spinner-border');
+            const refreshBtn = document.querySelector('button[onclick="refreshDashboard()"]');
+            
+            if (loading) {
+                spinners.forEach(el => el.classList.remove('d-none'));
+                if (refreshBtn) refreshBtn.disabled = true;
+            } else {
+                spinners.forEach(el => el.classList.add('d-none'));
+                if (refreshBtn) refreshBtn.disabled = false;
+            }
+        }
+        
+        // Update summary statistics
+        function updateSummaryStats(agentsData, loginsData, severityData) {
+            if (agentsData && agentsData.data) {
+                document.getElementById('totalAgents').textContent = agentsData.count || 0;
+            }
+            
+            if (severityData && severityData.data) {
+                const totalEvents = severityData.data.reduce((sum, count) => sum + count, 0);
+                document.getElementById('totalEvents24h').textContent = totalEvents;
+                
+                // Count high severity (assuming index 2 or based on labels)
+                const highIndex = severityData.labels ? severityData.labels.indexOf('high') : 2;
+                if (highIndex !== -1) {
+                    document.getElementById('highSeverity').textContent = severityData.data[highIndex] || 0;
+                }
+            }
+            
+            if (loginsData && loginsData.data) {
+                const failedLogins = loginsData.data.filter(login => 
+                    !login.success && 
+                    (login.event_type === 'failed_login' || login.event_type === 'auth_failure')
+                ).length;
+                document.getElementById('failedLogins').textContent = failedLogins;
+            }
+        }
+        
+        // Update charts
+        function updateCharts(eventsByTypeData, eventsBySeverityData, timelineData) {
+            // Events by type
+            if (eventsByTypeData?.labels?.length && eventsByTypeData?.data?.length) {
+                if (charts.eventTypesChart) {
+                    charts.eventTypesChart.data.labels = eventsByTypeData.labels.slice(0, 10);
+                    charts.eventTypesChart.data.datasets[0].data = eventsByTypeData.data.slice(0, 10);
+                    charts.eventTypesChart.update('none');
+                } else {
+                    createEventTypesChart(eventsByTypeData);
+                }
+            }
+
+            // Events by severity
+            if (eventsBySeverityData?.labels?.length && eventsBySeverityData?.data?.length) {
+                if (charts.severityChart) {
+                    charts.severityChart.data.labels = eventsBySeverityData.labels;
+                    charts.severityChart.data.datasets[0].data = eventsBySeverityData.data;
+                    charts.severityChart.update('none');
+                } else {
+                    createSeverityChart(eventsBySeverityData);
+                }
+            }
+
+            // Timeline
+            if (timelineData?.labels?.length && timelineData?.data?.length) {
+                if (charts.timelineChart) {
+                    // Сохраняем только часы из меток, например "2025-12-28 14:00" → "14:00"
+                    const shortLabels = timelineData.labels.map(label => 
+                        (label.split(' ').pop() || label).substring(0, 5)
+                    );
+                    
+                    charts.timelineChart.data.labels = shortLabels;
+                    charts.timelineChart.data.datasets[0].data = timelineData.data;
+                    charts.timelineChart.update('none');
+                } else {
+                    createTimelineChart(timelineData);
+                }
+            } else {
+                // Если данных нет — уничтожаем график, чтобы не остался "мусор"
+                if (charts.timelineChart) {
+                    charts.timelineChart.destroy();
+                    charts.timelineChart = null;
+                }
+            }
+        }
+        
+        // Create event types chart
+        function createEventTypesChart(data) {
+            const ctx = document.getElementById('eventTypesChart').getContext('2d');
+            
+            
+            // Prepare colors
+            const backgroundColors = [
+                '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF',
+                '#FF9F40', '#8AC926', '#1982C4', '#6A4C93', '#FF595E'
+            ];
+            
+            charts.eventTypesChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.labels.slice(0, 10),
+                    datasets: [{
+                        label: 'Number of Events',
+                        data: data.data.slice(0, 10),
+                        backgroundColor: backgroundColors,
+                        borderColor: backgroundColors.map(color => color.replace('0.8', '1')),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Create severity chart
+        function createSeverityChart(data) {
+            const ctx = document.getElementById('severityChart').getContext('2d');
+            
+            // Map severity to colors
+            const severityColors = {
+                'critical': '#FF0000',
+                'high': '#FF6384',
+                'medium': '#FF9F40',
+                'low': '#36A2EB',
+                'unknown': '#C9CBCF'
+            };
+            
+            const backgroundColors = data.labels.map(label => 
+                severityColors[label.toLowerCase()] || '#C9CBCF'
+            );
+            
+            charts.severityChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        data: data.data,
+                        backgroundColor: backgroundColors,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Create timeline chart
+        // Создайте график правильно
+        function createTimelineChart(data) {
+            if (!data || !Array.isArray(data.labels) || !Array.isArray(data.data)) {
+                console.warn('Invalid timeline data:', data);
+                return;
+            }
+
+            const canvas = document.getElementById('timelineChart');
+            const ctx = canvas.getContext('2d');
+            
+            // 🔥 Обязательно: сбросить inline-стили height/width
+            canvas.style.height = '';
+            canvas.style.width = '';
+
+            if (charts.timelineChart) {
+                charts.timelineChart.destroy();
+                charts.timelineChart = null; // ← важно обнулить
+            }
+
+            charts.timelineChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: 'Events per hour',
+                        data: data.data,
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: '#4361ee',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,   // ← изменено
+                    aspectRatio: 3,              // ← ширина в 3 раза больше высоты
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: ctx => `Events: ${ctx.raw}`
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Number of Events' },
+                            ticks: { precision: 0 },
+                            grid: { color: 'rgba(0,0,0,0.05)' }
+                        },
+                        x: {
+                            title: { display: true, text: 'Time (hours)' },
+                            grid: { color: 'rgba(0,0,0,0.05)' }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update recent logins list
+        function updateRecentLogins(data) {
+            const container = document.getElementById('recentLogins');
+            
+            if (!data || !data.data || data.data.length === 0) {
+                container.innerHTML = '<div class="text-muted">No recent logins found</div>';
+                return;
+            }
+            
+            let html = '';
+            data.data.slice(0, 8).forEach(login => {
+                const time = login.timestamp ? 
+                    new Date(login.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 
+                    'N/A';
+                
+                const successClass = login.success ? 'text-success' : 'text-danger';
+                const successIcon = login.success ? 'bi-check-circle' : 'bi-x-circle';
+                const eventType = login.event_type || 'login_attempt';
+                
+                html += `
+                    <div class="event-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="bi ${successIcon} ${successClass} me-2"></i>
+                                <strong>${login.user || 'unknown'}</strong>
+                                <small class="text-muted ms-2">${eventType}</small>
+                            </div>
+                            <div>
+                                <small class="text-muted">${time}</small>
+                            </div>
+                        </div>
+                        <div class="small text-muted mt-1">
+                            ${login.hostname || 'Unknown host'} - ${login.source || 'Unknown source'}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        // Update active hosts list
+        function updateActiveHosts(data) {
+            const container = document.getElementById('activeHosts');
+            
+            if (!data || !data.data || data.data.length === 0) {
+                container.innerHTML = '<div class="text-muted">No active hosts found</div>';
+                return;
+            }
+            
+            let html = '';
+            data.data.slice(0, 8).forEach(host => {
+                const severity = host.severity_counts || {};
+                const highCount = severity.high || 0;
+                const severityBadge = highCount > 0 ? 
+                    `<span class="badge bg-danger ms-2">${highCount} high</span>` : 
+                    `<span class="badge bg-success ms-2">Normal</span>`;
+                
+                html += `
+                    <div class="event-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="bi bi-pc me-2"></i>
+                                <strong>${host.hostname}</strong>
+                                ${severityBadge}
+                            </div>
+                            <div>
+                                <span class="badge bg-primary">${host.event_count} events</span>
+                            </div>
+                        </div>
+                        <div class="small text-muted mt-1">
+                            Sources: ${(host.sources || []).slice(0, 3).join(', ')}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        // Update top processes list
+        function updateTopProcesses(data) {
+            const container = document.getElementById('processesList');
+            
+            if (!data || !data.data || data.data.length === 0) {
+                container.innerHTML = '<div class="text-muted">No process data found</div>';
+                return;
+            }
+            
+            let html = '<table class="table table-sm">';
+            html += '<thead><tr><th>Process</th><th class="text-end">Events</th></tr></thead>';
+            html += '<tbody>';
+            
+            data.data.slice(0, 8).forEach(process => {
+                html += `
+                    <tr>
+                        <td>
+                            <i class="bi bi-gear me-2"></i>
+                            ${process.process}
+                        </td>
+                        <td class="text-end">
+                            <span class="badge bg-primary">${process.event_count}</span>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // Update top users list
+        function updateTopUsers(data) {
+            const container = document.getElementById('topUsersList');
+            
+            if (!data || !data.data || data.data.length === 0) {
+                container.innerHTML = '<div class="text-muted">No user data found</div>';
+                return;
+            }
+            
+            let html = '<table class="table table-sm">';
+            html += '<thead><tr><th>User</th><th class="text-end">Events</th><th>Event Types</th></tr></thead>';
+            html += '<tbody>';
+            
+            data.data.slice(0, 8).forEach(user => {
+                html += `
+                    <tr>
+                        <td>
+                            <i class="bi bi-person-circle me-2"></i>
+                            ${user.user}
+                        </td>
+                        <td class="text-end">
+                            <span class="badge bg-primary">${user.event_count}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted">${(user.event_types || []).slice(0, 2).join(', ')}</small>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+        
+        // Refresh dashboard
+        function refreshDashboard() {
+            loadDashboard();
+        }
+        
+        // Auto-refresh every 30 seconds
+        function startAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            
+            autoRefreshInterval = setInterval(() => {
+                refreshDashboard();
+            }, 30000); // 30 seconds
+        }
+        
+        // Stop auto-refresh when leaving page
+        window.addEventListener('beforeunload', () => {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+        });
+    </script>
+</body>
+</html>
